@@ -90,39 +90,39 @@ sudo apt install pulseaudio-utils python3 python3-usb
 
 ### Install
 
-Clone this repo and cd into it
-```
+1. Clone this repo and cd into it
+```bash
 git clone https://git.dymstro.nl/Dymstro/nova-chatmix-linux.git
 cd nova-chatmix-linux
 ```
 
-To be able to run the script as a non-root user, some udev rules need to be applied. This will allow regular users to access the base station USB device. It also starts the script when it gets plugged in (only when the systemd service is set up).
-
-Copy `50-nova-pro-wireless.rules` to `/etc/udev/rules.d` and reload udev rules:
-```
-sudo cp 50-nova-pro-wireless.rules /etc/udev/rules.d/
-
-sudo udevadm control --reload-rules
-sudo udevadm trigger
+2. Make the setup script executable
+```bash
+chmod +x setup.sh
 ```
 
-If you want to run this script on startup you can add and enable the systemd service
+3. Run the installation script with sudo
+```bash
+sudo ./setup.sh install
 ```
-## The systemd service expects the script in .local/bin
-# Create the folder if it doesn't exist
-mkdir -p ~/.local/bin
-# Copy the script to the expected location
-cp -i nova.py ~/.local/bin
 
-# Create systemd user unit folder if it doesn't exist
-mkdir -p ~/.config/systemd/user
-# Install the service file
-cp nova-chatmix.service ~/.config/systemd/user/
-# Reload systemd configuration
-systemctl --user daemon-reload
-# Enable and start the service
-systemctl --user enable nova-chatmix --now
+This will:
+- Set up the necessary udev rules to allow non-root users to access the base station USB device
+- Copy the script to ~/.local/bin
+- Install and enable the systemd service to run on startup
+- Start the service
+
+### Uninstall
+
+To remove everything:
+```bash
+sudo ./setup.sh uninstall
 ```
+
+This will:
+- Stop and disable the systemd service
+- Remove all installed files
+- Clean up udev rules
 
 ### Run
 
