@@ -1,13 +1,15 @@
 #!/usr/bin/python3
 
 # Licensed under the 0BSD
-
-from subprocess import Popen, check_output
 from signal import signal, SIGINT, SIGTERM
 from usb.core import find, USBTimeoutError, USBError
+import pulsectl
 
 
 class NovaProWireless:
+    # Headset pulse name
+    HEADSET_NAME = "SteelSeries_Arctis_Nova_Pro_Wireless"
+
     # USB IDs
     VID = 0x1038
     PID = 0x12E0
@@ -48,8 +50,8 @@ class NovaProWireless:
     PW_CHAT_SINK = "NovaChat"
 
     # PipeWire virtual sink processes
-    PW_LOOPBACK_GAME_PROCESS = None
-    PW_LOOPBACK_CHAT_PROCESS = None
+    PW_LOOPBACK_GAME_MODULE_ID = None
+    PW_LOOPBACK_CHAT_MODULE_ID = None
 
     # Keeps track of enabled features for when close() is called
     CHATMIX_CONTROLS_ENABLED = False
@@ -99,36 +101,82 @@ class NovaProWireless:
             self.ENDPOINT_TX,
             self._create_msgdata((self.TX, self.OPT_EQ_PRESET, preset)),
         )
-    
-    # Checks available sinks and select headset
+
     def _detect_original_sink(self):
+        """
+        Finds a sink that matches the headset name and saves its full name
+        """
         # If sink is set manually, skip auto detect
         if self.PW_ORIGINAL_SINK:
             return
-        sinks = check_output(["pactl", "list", "sinks", "short"]).decode().split("\n")
-        for sink in sinks:
-            print(sink)
-            name = sink.split("\t")[1]
-            if "SteelSeries_Arctis_Nova_Pro_Wireless" in name:
-                self.PW_ORIGINAL_SINK = name
-                break
+        with pulsectl.Pulse('list-sinks') as pulse:
+            sinks = pulse.sink_list()
+            for sink in sinks:
+                if self.HEADSET_NAME in sink.name:
+                    self.PW_ORIGINAL_SINK = sink.name
 
-    # Creates virtual pipewire loopback sinks, and redirects them to the real headset sink
     def _start_virtual_sinks(self):
+        """
+        Creates pulseaudio virtual combine sinks redirected to the headset.
+        """
         self._detect_original_sink()
-        cmd = [
-            "pw-loopback",
-            "-P",
-            self.PW_ORIGINAL_SINK,
-            "--capture-props=media.class=Audio/Sink",
-            "-n",
-        ]
-        self.PW_LOOPBACK_GAME_PROCESS = Popen(cmd + [self.PW_GAME_SINK])
-        self.PW_LOOPBACK_CHAT_PROCESS = Popen(cmd + [self.PW_CHAT_SINK])
+        self._remove_virtual_sinks()
+        self.PW_LOOPBACK_GAME_MODULE_ID = self._create_sink(self.PW_GAME_SINK, self.PW_ORIGINAL_SINK)
+        self.PW_LOOPBACK_CHAT_MODULE_ID = self._create_sink(self.PW_CHAT_SINK, self.PW_ORIGINAL_SINK)
 
     def _remove_virtual_sinks(self):
-        self.PW_LOOPBACK_GAME_PROCESS.terminate()
-        self.PW_LOOPBACK_CHAT_PROCESS.terminate()
+        """
+        Removes the virtual sinks
+        """
+        if self.PW_LOOPBACK_GAME_MODULE_ID is not None:
+            self._remove_sink(self.PW_LOOPBACK_GAME_MODULE_ID)
+            self.PW_LOOPBACK_GAME_MODULE_ID = None
+        if self.PW_LOOPBACK_CHAT_MODULE_ID is not None:
+            self._remove_sink(self.PW_LOOPBACK_CHAT_MODULE_ID)
+            self.PW_LOOPBACK_CHAT_MODULE_ID = None
+
+    def _create_sink(self, sink_name: str, output_sink: str) -> int:
+        """
+        Creates a pulse module-combine-sink, and returns the module id.
+        :param sink_name: the name of the sink to create
+        :param output_sink: the name of the sink to redirect the output to
+        :return: the virtual sink module_id
+        """
+        with pulsectl.Pulse('virtual-sink') as pulse:
+            try:
+                new_sink = pulse.module_load('module-combine-sink', f'sink_name={sink_name} slaves={output_sink} sink_properties=device.description={sink_name}')
+            except pulsectl.PulseError as e:
+                pulse.module_unload(new_sink)
+                print(f"Failed to create sink '{sink_name}': {e}")
+            return new_sink
+
+    def _remove_sink(self, module_id: int) -> None:
+        """
+        Deletes the sink with the specified module_id if it exists
+        :param module_id: the module_id of the sink to delete
+        """
+        with pulsectl.Pulse('virtual-sink') as pulse:
+            for module in pulse.module_list():
+                if module_id == module.index:
+                    pulse.module_unload(module.index)
+                    break
+
+    def _set_sink_volume(self, module_id: int, volume: float) -> None:
+        """
+        Set volume for a specific sink
+        :param module_id: Name of the sink
+        :param volume: Volume level (0.0 to 1.0)
+        """
+        with pulsectl.Pulse('volume-control') as pulse:
+            try:
+                sinks = pulse.sink_list()
+                target_sink = next((sink for sink in sinks if sink.owner_module == module_id), None)
+                if target_sink:
+                    pulse.volume_set_all_chans(target_sink, volume)
+                else:
+                    print(f"Sink '{module_id}' not found")
+            except pulsectl.PulseError as e:
+                print(f"Failed to set volume: {e}")
 
     # ChatMix implementation
     # Continuously read from base station and ignore everything but ChatMix messages (OPT_CHATMIX)
@@ -145,12 +193,10 @@ class NovaProWireless:
                 gamevol = msg[2]
                 chatvol = msg[3]
 
-                # Set Volume using PulseAudio tools. Can be done with pure pipewire tools, but I didn't feel like it
-                cmd = ["pactl", "set-sink-volume"]
-
                 # Actually change volume. Everytime you turn the dial, both volumes are set to the correct level
-                Popen(cmd + [f"input.{self.PW_GAME_SINK}", f"{gamevol}%"])
-                Popen(cmd + [f"input.{self.PW_CHAT_SINK}", f"{chatvol}%"])
+                self._set_sink_volume(self.PW_LOOPBACK_GAME_MODULE_ID, gamevol * 0.01)
+                self._set_sink_volume(self.PW_LOOPBACK_CHAT_MODULE_ID, chatvol * 0.01)
+
             # Ignore timeout.
             except USBTimeoutError:
                 continue
@@ -182,13 +228,19 @@ class NovaProWireless:
             except USBTimeoutError:
                 continue
 
-    # Terminates processes and disables features
-    def close(self, signum, frame):
+    def close(self, signum=None, frame=None) -> None:
+        """
+        Disables activated features and cleans the created sinks
+        :param signum:
+        :param frame:
+        """
         self.CLOSE = True
         if self.CHATMIX_CONTROLS_ENABLED:
             self.set_chatmix_controls(False)
         if self.SONAR_ICON_ENABLED:
             self.set_sonar_icon(False)
+
+        self._remove_virtual_sinks()
 
 
 # When run directly, just start the ChatMix implementation. (And activate the icon, just for fun)
@@ -199,5 +251,7 @@ if __name__ == "__main__":
 
     signal(SIGINT, nova.close)
     signal(SIGTERM, nova.close)
-
-    nova.chatmix()
+    try:
+        nova.chatmix()
+    except KeyboardInterrupt:
+        nova.close()
