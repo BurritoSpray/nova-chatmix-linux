@@ -183,6 +183,7 @@ class NovaProWireless:
     # The .read method times out and returns an error. This error is catched and basically ignored. Timeout can be configured, but not turned off (I think).
     def chatmix(self):
         self._start_virtual_sinks()
+        self.set_default_sink(NovaProWireless.PW_GAME_SINK)
         while not self.CLOSE:
             try:
                 msg = self.dev.read(self.ENDPOINT_RX, self.MSGLEN)
@@ -206,6 +207,13 @@ class NovaProWireless:
                 self._remove_virtual_sinks()
         # Remove virtual sinks on exit
         self._remove_virtual_sinks()
+
+    def set_default_sink(self, sink_name: str):
+        with pulsectl.Pulse('set-default-sink') as pulse:
+            for sink in pulse.sink_list():
+                if sink.name == sink_name:
+                    pulse.sink_default_set(sink)
+                    return
 
     # Prints output from base station. `debug` argument enables raw output.
     def print_output(self, debug: bool = False):
