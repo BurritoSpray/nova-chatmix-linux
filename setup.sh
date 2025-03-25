@@ -9,6 +9,9 @@ fi
 install() {
     echo "Installing Nova ChatMix..."
 
+    # Install python requirements
+    sudo python3 -m pip install pulsectl
+
     # Create directory and copy script
     mkdir -p "$HOME/.local/bin"
     cp nova.py "$HOME/.local/bin/"
