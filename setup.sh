@@ -10,7 +10,7 @@ install() {
     echo "Installing Nova ChatMix..."
 
     # Install python requirements
-    sudo python3 -m pip install pulsectl
+    sudo python3 -m pip install pyusb pulsectl
 
     # Create directory and copy script
     mkdir -p "$HOME/.local/bin"
