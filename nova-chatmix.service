@@ -4,7 +4,8 @@ After=pipewire.service pipewire-pulse.service
 Wants=network-online.target
 
 [Service]
-Restart=no
+Restart=on-failure
+RestartSec=5
 Type=simple
 ExecStartPre=/bin/sleep 1
 ExecStart=/usr/bin/python3 %h/.local/bin/nova.py 
