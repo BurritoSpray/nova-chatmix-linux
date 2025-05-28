@@ -205,6 +205,7 @@ class NovaProWireless:
                 print("Device was probably disconnected, exiting..")
                 self.CLOSE = True
                 self._remove_virtual_sinks()
+                exit(-1)
         # Remove virtual sinks on exit
         self._remove_virtual_sinks()
 
